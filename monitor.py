@@ -96,9 +96,10 @@ def main():
         log(f"initial read failed: {e}; assuming normal")
         current = False
 
-    slack(
-        f"Ingar online. Initial state: {'ALARM' if current else 'normal'}."
-    )
+    if current:
+        slack("<!channel> Ingar online. Initial state: ALARM.")
+    else:
+        slack("Ingar online. Initial state: normal.")
     last_heartbeat = time.monotonic()
 
     pending_state = current
@@ -117,8 +118,8 @@ def main():
                     current = reading
                     pending_since = None
                     if current:
-                        slack(":rotating_light: FREEZER ALARM (or power loss). "
-                              "Check the CS200 immediately.")
+                        slack("<!channel> :rotating_light: FREEZER ALARM "
+                              "(or power loss). Check the CS200 immediately.")
                     else:
                         slack(":white_check_mark: Freezer back to normal.")
             else:
