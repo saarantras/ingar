@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/ingar
-EnvironmentFile=/home/pi/.config/ingar/ingar.env
-ExecStart=/usr/bin/python3 /home/pi/ingar/monitor.py
+User=user
+WorkingDirectory=/home/user/ingar
+EnvironmentFile=/home/user/.config/ingar/ingar.env
+ExecStart=/usr/bin/python3 /home/user/ingar/monitor.py
 Restart=always
 RestartSec=5
 StandardOutput=journal

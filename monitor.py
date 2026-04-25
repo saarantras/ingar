@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ingar v1: poll the freezer's Remote Alarm dry contact and notify Slack on
-state changes. Send periodic heartbeats to Healthchecks.io so we also get
-paged when the Pi itself goes dark.
+state changes. Also posts a periodic heartbeat to the same Slack channel so
+lab members can eyeball that the monitor is still alive.
 
 Wiring (fail-safe):
   Freezer NC --- GPIO pin (input, internal pull-up enabled)
@@ -21,11 +21,10 @@ import urllib.request
 
 ALARM_PIN = int(os.environ.get("INGAR_ALARM_PIN", "17"))
 POLL_INTERVAL_S = float(os.environ.get("INGAR_POLL_INTERVAL_S", "1.0"))
-HEARTBEAT_INTERVAL_S = float(os.environ.get("INGAR_HEARTBEAT_INTERVAL_S", "600"))
 DEBOUNCE_S = float(os.environ.get("INGAR_DEBOUNCE_S", "2.0"))
+HEARTBEAT_INTERVAL_S = float(os.environ.get("INGAR_HEARTBEAT_INTERVAL_S", "21600"))
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
-HEALTHCHECKS_URL = os.environ.get("HEALTHCHECKS_URL", "").strip()
 TESTING = os.environ.get("INGAR_TESTING", "0") == "1"
 STUB_GPIO = os.environ.get("STUB_GPIO", "0") == "1"
 STUB_STATE_FILE = os.environ.get("STUB_STATE_FILE", "/tmp/ingar_stub_state")
@@ -53,16 +52,6 @@ def slack(msg):
             r.read()
     except Exception as e:
         log(f"slack post failed: {e}")
-
-
-def heartbeat():
-    if not HEALTHCHECKS_URL:
-        return
-    try:
-        with urllib.request.urlopen(HEALTHCHECKS_URL, timeout=10) as r:
-            r.read()
-    except Exception as e:
-        log(f"heartbeat failed: {e}")
 
 
 def setup_gpio():
@@ -110,7 +99,6 @@ def main():
     slack(
         f"Ingar online. Initial state: {'ALARM' if current else 'normal'}."
     )
-    heartbeat()
     last_heartbeat = time.monotonic()
 
     pending_state = current
@@ -138,7 +126,8 @@ def main():
                 pending_since = None
 
             if time.monotonic() - last_heartbeat >= HEARTBEAT_INTERVAL_S:
-                heartbeat()
+                state = "ALARM" if current else "normal"
+                slack(f":heartbeat: heartbeat -- monitor alive, state: {state}")
                 last_heartbeat = time.monotonic()
 
         except Exception as e:
