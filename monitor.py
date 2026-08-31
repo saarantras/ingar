@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Ingar v1: poll the freezer's Remote Alarm dry contact and notify Slack on
 state changes. Also posts a periodic heartbeat to the same Slack channel so
-lab members can eyeball that the monitor is still alive.
+lab members can eyeball that the monitor is still alive, and pings
+Healthchecks.io as a dead-man's switch so that a Pi that drops off the network
+or wedges gets noticed by something other than a human remembering to look.
 
 Wiring (fail-safe):
   Freezer NC --- GPIO pin (input, internal pull-up enabled)
@@ -23,8 +25,10 @@ ALARM_PIN = int(os.environ.get("INGAR_ALARM_PIN", "17"))
 POLL_INTERVAL_S = float(os.environ.get("INGAR_POLL_INTERVAL_S", "1.0"))
 DEBOUNCE_S = float(os.environ.get("INGAR_DEBOUNCE_S", "2.0"))
 HEARTBEAT_INTERVAL_S = float(os.environ.get("INGAR_HEARTBEAT_INTERVAL_S", "21600"))
+PING_INTERVAL_S = float(os.environ.get("INGAR_PING_INTERVAL_S", "300"))
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+HEALTHCHECKS_URL = os.environ.get("HEALTHCHECKS_URL", "").strip()
 TESTING = os.environ.get("INGAR_TESTING", "0") == "1"
 STUB_GPIO = os.environ.get("STUB_GPIO", "0") == "1"
 STUB_STATE_FILE = os.environ.get("STUB_STATE_FILE", "/tmp/ingar_stub_state")
@@ -54,6 +58,28 @@ def slack(msg):
         log(f"slack post failed: {e}")
 
 
+def healthcheck_ping(state):
+    """Dead-man's switch: tell Healthchecks.io the monitor loop is alive.
+
+    Deliberately independent of freezer state -- an ALARM still pings. Alarm
+    conditions go to Slack; this check answers the separate question of whether
+    anyone is still watching at all. Folding them together would make a dead Pi
+    and an alarming freezer look identical.
+
+    Call only after a successful GPIO read, so that a read that fails forever
+    (which the loop otherwise swallows and logs) stops the pings and trips the
+    check instead of looking healthy.
+    """
+    if not HEALTHCHECKS_URL:
+        return
+    try:
+        req = urllib.request.Request(HEALTHCHECKS_URL, data=f"state={state}".encode("utf-8"))
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+    except Exception as e:
+        log(f"healthchecks ping failed: {e}")
+
+
 def setup_gpio():
     if STUB_GPIO:
         log(f"STUB_GPIO=1; reading state from {STUB_STATE_FILE} (0=normal, 1=alarm)")
@@ -78,6 +104,10 @@ def read_alarm(GPIO):
 
 def main():
     log(f"starting (TESTING={TESTING}, STUB_GPIO={STUB_GPIO}, pin={ALARM_PIN})")
+    if HEALTHCHECKS_URL:
+        log(f"healthchecks enabled, ping every {PING_INTERVAL_S:.0f}s")
+    else:
+        log("HEALTHCHECKS_URL not set; no dead-man's switch")
 
     GPIO = setup_gpio()
 
@@ -101,6 +131,7 @@ def main():
     else:
         slack("Ingar online. Initial state: normal.")
     last_heartbeat = time.monotonic()
+    last_ping = None  # None => ping on the first loop iteration that reads cleanly
 
     pending_state = current
     pending_since = None
@@ -125,6 +156,11 @@ def main():
             else:
                 pending_state = current
                 pending_since = None
+
+            # reaching here means read_alarm() returned, so the loop is healthy
+            if last_ping is None or time.monotonic() - last_ping >= PING_INTERVAL_S:
+                healthcheck_ping("ALARM" if current else "normal")
+                last_ping = time.monotonic()
 
             if time.monotonic() - last_heartbeat >= HEARTBEAT_INTERVAL_S:
                 state = "ALARM" if current else "normal"
