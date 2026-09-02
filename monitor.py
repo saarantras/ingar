@@ -24,6 +24,7 @@ import urllib.request
 ALARM_PIN = int(os.environ.get("INGAR_ALARM_PIN", "17"))
 POLL_INTERVAL_S = float(os.environ.get("INGAR_POLL_INTERVAL_S", "1.0"))
 DEBOUNCE_S = float(os.environ.get("INGAR_DEBOUNCE_S", "2.0"))
+# <=0 disables the periodic Slack heartbeat; Healthchecks is the liveness signal.
 HEARTBEAT_INTERVAL_S = float(os.environ.get("INGAR_HEARTBEAT_INTERVAL_S", "21600"))
 PING_INTERVAL_S = float(os.environ.get("INGAR_PING_INTERVAL_S", "300"))
 
@@ -108,6 +109,10 @@ def main():
         log(f"healthchecks enabled, ping every {PING_INTERVAL_S:.0f}s")
     else:
         log("HEALTHCHECKS_URL not set; no dead-man's switch")
+    if HEARTBEAT_INTERVAL_S > 0:
+        log(f"slack heartbeat every {HEARTBEAT_INTERVAL_S:.0f}s")
+    else:
+        log("slack heartbeat disabled; posting state changes only")
 
     GPIO = setup_gpio()
 
@@ -162,7 +167,7 @@ def main():
                 healthcheck_ping("ALARM" if current else "normal")
                 last_ping = time.monotonic()
 
-            if time.monotonic() - last_heartbeat >= HEARTBEAT_INTERVAL_S:
+            if HEARTBEAT_INTERVAL_S > 0 and time.monotonic() - last_heartbeat >= HEARTBEAT_INTERVAL_S:
                 state = "ALARM" if current else "normal"
                 slack(f":heartbeat: heartbeat -- monitor alive, state: {state}")
                 last_heartbeat = time.monotonic()
